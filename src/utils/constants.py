@@ -2,7 +2,6 @@ import json
 import os
 from enum import Enum
 from pathlib import Path
-
 from torch import optim
 
 FLBENCH_ROOT = Path(__file__).parent.parent.parent.absolute()
@@ -17,9 +16,9 @@ class MODE(Enum):
 
 DEFAULTS = {
     "method": "fedavg",
-    "dataset": {"name": "cifar10"},
+    "dataset": {"name": "polypgen"},
     "model": {
-        "name": "lenet5",
+        "name": "resnet18",
         "use_torchvision_pretrained_weights": True,
         "external_model_weights_path": None,
     },
@@ -45,7 +44,7 @@ DEFAULTS = {
         "lr": 0.01,
         "dampening": 0,
         "weight_decay": 0,
-        "momentum": 0,
+        "momentum": 0.9,
         "alpha": 0.99,
         "nesterov": False,
         "betas": [0.9, 0.999],
@@ -60,8 +59,8 @@ DEFAULTS = {
     },
     "common": {
         "seed": 42,
-        "join_ratio": 0.1,
-        "global_epoch": 100,
+        "join_ratio": 1.0,
+        "global_epoch": 50,
         "local_epoch": 5,
         "batch_size": 32,
         "reset_optimizer_on_global_epoch": True,
@@ -71,31 +70,38 @@ DEFAULTS = {
         "client_side_evaluation": True,
         "test": {
             "client": {
-                "interval": 100,
+                "interval": 1,
                 "finetune_epoch": 0,
                 "train": False,
                 "val": False,
                 "test": True,
             },
             "server": {
-                "interval": -1,
+                "interval": 1,
                 "train": False,
                 "val": False,
-                "test": False,
+                "test": True,
                 "model_in_train_mode": False,
             },
         },
-        "verbose_gap": 10,
+        "verbose_gap": 1,
         "monitor": None,
         "use_cuda": True,
         "save_log": True,
         "save_model": False,
-        "save_learning_curve_plot": True,
+        "save_learning_curve_plot": False,
         "save_metrics": True,
         "delete_useless_run": True,
     },
+    # PFL fixes flags
+    "p1_fedrep": False,
+    "p2_fedbn": False,
+    "p3_fednova": False,
+    # Heterogeneity switches
+    "h1_label_skew": False,
+    "h2_feature_shift": True,
+    "h3_system_heterogeneity": False,
 }
-
 
 INPUT_CHANNELS = {
     "cifar10": 3,
@@ -104,7 +110,6 @@ INPUT_CHANNELS = {
     "usps": 1,
     "polypgen": 3,
 }
-
 
 # (C, H, W)
 DATA_SHAPE = {
@@ -123,7 +128,6 @@ NUM_CLASSES = {
     "polypgen": 2,
 }
 
-
 DATA_MEAN = {
     "cifar10": [0.4914, 0.4822, 0.4465],
     "cifar100": [0.5071, 0.4865, 0.4409],
@@ -131,7 +135,6 @@ DATA_MEAN = {
     "usps": [0.1700],
     "polypgen": [0.485, 0.456, 0.406],
 }
-
 
 DATA_STD = {
     "cifar10": [0.2023, 0.1994, 0.201],

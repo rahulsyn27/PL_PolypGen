@@ -3,212 +3,113 @@ import torch
 import torch.nn as nn
 from scipy.spatial.distance import jensenshannon
 from collections import Counter
-from typing import List, Dict, Union, Tuple
+from typing import List, Dict, Union, Tuple, Optional
 
 
 def calculate_label_distributions(
     label_arrays: List[np.ndarray],
-    num_classes: int
+    num_classes: int = 2
 ) -> np.ndarray:
     """
     Convert list of label arrays to probability distributions.
     
     Args:
-        label_arrays: List of 6 arrays, each containing class labels for a client
-        num_classes: Total number of classes
+        label_arrays: List of arrays, each containing class labels for a client
+        num_classes: Total number of classes (default 2 for polypgen)
     
     Returns:
-        Array of shape (6, num_classes) with probability distributions
+        Array of shape (num_clients, num_classes) with probability distributions
     """
     distributions = np.zeros((len(label_arrays), num_classes))
     for i, labels in enumerate(label_arrays):
         counts = Counter(labels)
-        total = len(labels)
+        total = max(1, len(labels))
         for cls, count in counts.items():
-            distributions[i, cls] = count / total
+            if cls < num_classes:
+                distributions[i, cls] = count / total
     return distributions
 
 
 def jensen_shannon_divergence(
     label_arrays: List[np.ndarray],
-    num_classes: int = None
+    num_classes: int = 2
 ) -> float:
     """
-    Calculate average Jensen-Shannon Divergence between label distributions of 6 clients.
+    Calculate average pairwise Jensen-Shannon Divergence between label distributions of clients.
     
     Args:
-        label_arrays: List of 6 arrays, each containing class labels for a client
-        num_classes: Total number of classes (auto-detected if None)
+        label_arrays: List of label arrays for each client
+        num_classes: Total number of classes
     
     Returns:
-        Average pairwise JS divergence score
+        Average pairwise JS divergence score in [0, 1]
     """
-    if len(label_arrays) != 6:
-        raise ValueError(f"Expected 6 clients, got {len(label_arrays)}")
-    
-    if num_classes is None:
-        num_classes = max(max(arr) for arr in label_arrays) + 1
+    if len(label_arrays) < 2:
+        return 0.0
     
     distributions = calculate_label_distributions(label_arrays, num_classes)
+    n = len(label_arrays)
     
     js_divergences = []
-    for i in range(6):
-        for j in range(i + 1, 6):
+    for i in range(n):
+        for j in range(i + 1, n):
+            # Base 2 JSD squared gives standard metric in [0, 1]
             jsd = jensenshannon(distributions[i], distributions[j], base=2) ** 2
-            js_divergences.append(jsd)
+            if not np.isnan(jsd):
+                js_divergences.append(jsd)
     
-    return float(np.mean(js_divergences))
+    return float(np.mean(js_divergences)) if js_divergences else 0.0
 
 
-def jensen_shannon_divergence_pairwise(
-    label_arrays: List[np.ndarray],
-    num_classes: int = None
-) -> np.ndarray:
+def calculate_bn_distance(
+    client_models_or_stats: List[Union[nn.Module, Dict[str, torch.Tensor]]]
+) -> float:
     """
-    Calculate full pairwise Jensen-Shannon Divergence matrix.
+    Calculate average pairwise distance between the sites' batch-normalisation statistics
+    (running_mean and running_var) to quantify scanner/feature shift (H2).
     
-    Returns:
-        6x6 symmetric matrix of JS divergences
-    """
-    if num_classes is None:
-        num_classes = max(max(arr) for arr in label_arrays) + 1
-    
-    distributions = calculate_label_distributions(label_arrays, num_classes)
-    js_matrix = np.zeros((6, 6))
-    
-    for i in range(6):
-        for j in range(6):
-            if i != j:
-                js_matrix[i, j] = jensenshannon(distributions[i], distributions[j], base=2) ** 2
-    
-    return js_matrix
-
-
-def extract_bn_statistics(model: nn.Module) -> Dict[str, Tuple[torch.Tensor, torch.Tensor]]:
-    """
-    Extract running_mean and running_var from all BatchNorm layers in a model.
+    Formula based on 2-Wasserstein distance between 1D Gaussians per channel:
+    W_2^2(N(u_1, s_1^2), N(u_2, s_2^2)) = (u_1 - u_2)^2 + (s_1 - s_2)^2
     
     Args:
-        model: PyTorch model with BatchNorm layers
+        client_models_or_stats: List of models or state_dicts from each client
     
     Returns:
-        Dict mapping layer_name -> (running_mean, running_var)
+        Average pairwise BN distance across all clients and all BN layers
     """
-    bn_stats = {}
-    for name, module in model.named_modules():
-        if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
-            bn_stats[name] = (
-                module.running_mean.detach().clone(),
-                module.running_var.detach().clone()
-            )
-    return bn_stats
+    if len(client_models_or_stats) < 2:
+        return 0.0
 
+    # Extract BN running stats for each client
+    extracted_stats = []
+    for item in client_models_or_stats:
+        state_dict = item.state_dict() if isinstance(item, nn.Module) else item
+        means = []
+        vars_ = []
+        for key, val in state_dict.items():
+            if "running_mean" in key:
+                means.append(val.detach().cpu().numpy().flatten())
+            elif "running_var" in key:
+                vars_.append(np.maximum(1e-6, val.detach().cpu().numpy().flatten()))
+        if means and vars_:
+            all_means = np.concatenate(means)
+            all_stds = np.sqrt(np.concatenate(vars_))
+            extracted_stats.append((all_means, all_stds))
 
-def batch_norm_distance(
-    client_models: List[nn.Module],
-    layer_names: List[str] = None
-) -> Dict[str, float]:
-    """
-    Calculate Batch-Normalization Distance (Feature Shift severity) between 6 client models.
-    
-    Measures L2 distance between running_mean and running_var of BN layers across clients.
-    
-    Args:
-        client_models: List of 6 PyTorch models
-        layer_names: Specific BN layer names to compare (None = all BN layers)
-    
-    Returns:
-        Dict with:
-            - 'mean_l2_dist': Average L2 distance of running_mean across all pairs
-            - 'var_l2_dist': Average L2 distance of running_var across all pairs
-            - 'combined_l2_dist': Average combined L2 distance
-            - 'per_layer': Dict of per-layer distances
-    """
-    if len(client_models) != 6:
-        raise ValueError(f"Expected 6 client models, got {len(client_models)}")
-    
-    all_bn_stats = [extract_bn_statistics(model) for model in client_models]
-    
-    if layer_names is None:
-        layer_names = list(all_bn_stats[0].keys())
-    
-    per_layer = {}
-    mean_distances = []
-    var_distances = []
-    combined_distances = []
-    
-    for layer_name in layer_names:
-        if layer_name not in all_bn_stats[0]:
-            continue
-        
-        layer_mean_distances = []
-        layer_var_distances = []
-        
-        for i in range(6):
-            for j in range(i + 1, 6):
-                mean_i, var_i = all_bn_stats[i][layer_name]
-                mean_j, var_j = all_bn_stats[j][layer_name]
-                
-                mean_l2 = torch.norm(mean_i - mean_j, p=2).item()
-                var_l2 = torch.norm(var_i - var_j, p=2).item()
-                
-                layer_mean_distances.append(mean_l2)
-                layer_var_distances.append(var_l2)
-                mean_distances.append(mean_l2)
-                var_distances.append(var_l2)
-                combined_distances.append(mean_l2 + var_l2)
-        
-        per_layer[layer_name] = {
-            'mean_l2': float(np.mean(layer_mean_distances)) if layer_mean_distances else 0.0,
-            'var_l2': float(np.mean(layer_var_distances)) if layer_var_distances else 0.0,
-            'combined_l2': float(np.mean(layer_mean_distances) + np.mean(layer_var_distances)) if layer_mean_distances else 0.0,
-        }
-    
-    return {
-        'mean_l2_dist': float(np.mean(mean_distances)) if mean_distances else 0.0,
-        'var_l2_dist': float(np.mean(var_distances)) if var_distances else 0.0,
-        'combined_l2_dist': float(np.mean(combined_distances)) if combined_distances else 0.0,
-        'per_layer': per_layer
-    }
+    if len(extracted_stats) < 2:
+        return 0.0
 
+    n = len(extracted_stats)
+    pairwise_distances = []
+    for i in range(n):
+        u1, s1 = extracted_stats[i]
+        for j in range(i + 1, n):
+            u2, s2 = extracted_stats[j]
+            # Ensure matching shape
+            min_len = min(len(u1), len(u2))
+            mean_diff_sq = np.mean((u1[:min_len] - u2[:min_len]) ** 2)
+            std_diff_sq = np.mean((s1[:min_len] - s2[:min_len]) ** 2)
+            dist = np.sqrt(mean_diff_sq + std_diff_sq)
+            pairwise_distances.append(dist)
 
-def batch_norm_distance_matrix(
-    client_models: List[nn.Module],
-    layer_names: List[str] = None
-) -> Dict[str, np.ndarray]:
-    """
-    Calculate pairwise BN distance matrices for running_mean and running_var.
-    
-    Returns:
-        Dict with 'mean_matrix' and 'var_matrix' as 6x6 numpy arrays
-    """
-    if len(client_models) != 6:
-        raise ValueError(f"Expected 6 client models, got {len(client_models)}")
-    
-    all_bn_stats = [extract_bn_statistics(model) for model in client_models]
-    
-    if layer_names is None:
-        layer_names = list(all_bn_stats[0].keys())
-    
-    mean_matrices = {}
-    var_matrices = {}
-    
-    for layer_name in layer_names:
-        if layer_name not in all_bn_stats[0]:
-            continue
-        
-        mean_matrix = np.zeros((6, 6))
-        var_matrix = np.zeros((6, 6))
-        
-        for i in range(6):
-            for j in range(6):
-                if i != j:
-                    mean_i, var_i = all_bn_stats[i][layer_name]
-                    mean_j, var_j = all_bn_stats[j][layer_name]
-                    mean_matrix[i, j] = torch.norm(mean_i - mean_j, p=2).item()
-                    var_matrix[i, j] = torch.norm(var_i - var_j, p=2).item()
-        
-        mean_matrices[layer_name] = mean_matrix
-        var_matrices[layer_name] = var_matrix
-    
-    return {'mean_matrix': mean_matrices, 'var_matrix': var_matrices}
+    return float(np.mean(pairwise_distances)) if pairwise_distances else 0.0
