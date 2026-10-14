@@ -6,10 +6,8 @@
 method: fedavg
 
 dataset:
-  # [mnist, cifar10, cifar100, emnist, fmnist, femnist, medmnist,
-  # medmnistA, medmnistC, covid19, celeba, synthetic, svhn,
-  # tiny_imagenet, cinic10, domain]
-  name: mnist
+  # [cifar10, cifar100, svhn, usps, polypgen]
+  name: cifar10
 
 model:
   name: lenet5
@@ -139,8 +137,8 @@ common:
 # FL-bench uses FL method arguments by args.<method>.<arg>.
 # You need to follow the key set in `get_hyperparams()` in class <method>Server, src/server/<method>.py
 # FL-bench will ignore these arguments if they are not supported by the selected method,
-# e.g., if you are running FedProx, then pFedSim arguments will be ignored.
-fedprox:
-  mu: 0.01
-pfedsim:
-  warmup_round: 0.5
+# e.g., if you are running FedRep, then FedNova arguments will be ignored.
+fedrep:
+  train_body_epoch: 1
+fedbn:
+fednova:

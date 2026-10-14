@@ -13,11 +13,8 @@ import numpy as np
 
 from data.utils.datasets import DATASETS, BaseDataset
 from data.utils.process import (
-    exclude_domain,
-    generate_synthetic_data,
     plot_distribution,
-    process_celeba,
-    process_femnist,
+    process_polypgen,
     prune_args,
 )
 from data.utils.schemes import (
@@ -55,32 +52,14 @@ def main(args):
     stats = {i: {"x": 0, "y": {}} for i in range(args.client_num)}
     dataset: BaseDataset = None
 
-    if args.dataset == "femnist":
-        dataset = process_femnist(args, partition, stats)
+    if args.dataset == "polypgen":
+        dataset = process_polypgen(args, partition, stats)
         partition["val"] = []
-    elif args.dataset == "celeba":
-        dataset = process_celeba(args, partition, stats)
-        partition["val"] = []
-    elif args.dataset == "synthetic":
-        dataset = generate_synthetic_data(args, partition, stats)
-    else:  # MEDMNIST, COVID, MNIST, CIFAR10, ...
-        # NOTE: If `args.ood_domains`` is not empty, then FL-bench will map all labels (class space) to the domain space
-        # and partition data according to the new `targets` array.
+    else:  # CIFAR10, CIFAR100, SVHN, USPS
         dataset = DATASETS[args.dataset](dataset_root, args)
         targets = dataset.targets.numpy().astype(np.int32)
         target_indices = np.arange(len(targets), dtype=np.int32)
         valid_label_set = set(range(len(dataset.classes)))
-        if args.dataset in ["domain"] and args.ood_domains:
-            metadata = json.load(open(dataset_root / "metadata.json", "r"))
-            valid_label_set, targets, client_num = exclude_domain(
-                client_num=client_num,
-                domain_map=metadata["domain_map"],
-                targets=targets,
-                domain_indices_bound=metadata["domain_indices_bound"],
-                ood_domains=set(args.ood_domains),
-                partition=partition,
-                stats=stats,
-            )
 
         iid_data_partition = deepcopy(partition)
         iid_stats = deepcopy(stats)
@@ -165,12 +144,6 @@ def main(args):
                     partition=partition,
                     stats=stats,
                 )
-            elif args.dataset in ["domain"] and args.ood_domains is None:
-                with open(dataset_root / "original_partition.pkl", "rb") as f:
-                    partition = {}
-                    partition["data_indices"] = pickle.load(f)
-                    partition["separation"] = None
-                    args.client_num = len(partition["data_indices"])
             else:
                 raise RuntimeError(
                     "Part of data indices are ignored. Please set arbitrary one arg from"
@@ -221,114 +194,59 @@ def main(args):
             "total": args.client_num,
         }
 
-    if args.dataset not in ["femnist", "celeba"]:
-        if args.split == "sample":
-            for client_id in partition["separation"]["train"]:
-                indices = partition["data_indices"][client_id]
-                np.random.shuffle(indices)
-                testset_size = int(len(indices) * args.test_ratio)
-                valset_size = int(len(indices) * args.val_ratio)
-                trainset, valset, testset = (
-                    indices[testset_size + valset_size :],
-                    indices[testset_size : testset_size + valset_size],
-                    indices[:testset_size],
-                )
-                partition["data_indices"][client_id] = {
-                    "train": trainset,
-                    "val": valset,
-                    "test": testset,
-                }
-        elif args.split == "user":
-            for client_id in partition["separation"]["train"]:
-                indices = partition["data_indices"][client_id]
-                partition["data_indices"][client_id] = {
-                    "train": indices,
-                    "val": np.array([], dtype=np.int64),
-                    "test": np.array([], dtype=np.int64),
-                }
-
-            for client_id in partition["separation"]["val"]:
-                indices = partition["data_indices"][client_id]
-                partition["data_indices"][client_id] = {
-                    "train": np.array([], dtype=np.int64),
-                    "val": indices,
-                    "test": np.array([], dtype=np.int64),
-                }
-
-            for client_id in partition["separation"]["test"]:
-                indices = partition["data_indices"][client_id]
-                partition["data_indices"][client_id] = {
-                    "train": np.array([], dtype=np.int64),
-                    "val": np.array([], dtype=np.int64),
-                    "test": indices,
-                }
-
-    if args.dataset in ["domain"]:
-        class_targets = np.array(dataset.targets, dtype=np.int32)
-        metadata = json.load(open(dataset_root / "metadata.json", "r"))
-
-        def _idx_2_domain_label(index):
-            for domain, bound in metadata["domain_indices_bound"].items():
-                if bound["begin"] <= index < bound["end"]:
-                    return metadata["domain_map"][domain]
-
-        domain_targets = np.vectorize(_idx_2_domain_label)(
-            np.arange(len(class_targets), dtype=np.int64)
-        )
-        for client_id in range(args.client_num):
-            indices = np.concatenate(
-                [
-                    partition["data_indices"][client_id]["train"],
-                    partition["data_indices"][client_id]["val"],
-                    partition["data_indices"][client_id]["test"],
-                ]
-            ).astype(np.int64)
-            stats[client_id] = {
-                "x": len(indices),
-                "class space": Counter(class_targets[indices].tolist()),
-                "domain space": Counter(domain_targets[indices].tolist()),
+    if args.split == "sample":
+        for client_id in partition["separation"]["train"]:
+            indices = partition["data_indices"][client_id]
+            np.random.shuffle(indices)
+            testset_size = int(len(indices) * args.test_ratio)
+            valset_size = int(len(indices) * args.val_ratio)
+            trainset, valset, testset = (
+                indices[testset_size + valset_size :],
+                indices[testset_size : testset_size + valset_size],
+                indices[:testset_size],
+            )
+            partition["data_indices"][client_id] = {
+                "train": trainset,
+                "val": valset,
+                "test": testset,
             }
-        stats["domain_map"] = metadata["domain_map"]
+    elif args.split == "user":
+        for client_id in partition["separation"]["train"]:
+            indices = partition["data_indices"][client_id]
+            partition["data_indices"][client_id] = {
+                "train": indices,
+                "val": np.array([], dtype=np.int64),
+                "test": np.array([], dtype=np.int64),
+            }
+
+        for client_id in partition["separation"]["val"]:
+            indices = partition["data_indices"][client_id]
+            partition["data_indices"][client_id] = {
+                "train": np.array([], dtype=np.int64),
+                "val": indices,
+                "test": np.array([], dtype=np.int64),
+            }
+
+        for client_id in partition["separation"]["test"]:
+            indices = partition["data_indices"][client_id]
+            partition["data_indices"][client_id] = {
+                "train": np.array([], dtype=np.int64),
+                "val": np.array([], dtype=np.int64),
+                "test": indices,
+            }
 
     # plot
     if args.plot_distribution:
-        if args.dataset in ["domain"]:
-            # class distribution
-            counts = np.zeros((len(dataset.classes), args.client_num), dtype=np.int64)
-            client_ids = range(args.client_num)
-            for i, client_id in enumerate(client_ids):
-                for j, cnt in stats[client_id]["class space"].items():
-                    counts[j][i] = cnt
-            plot_distribution(
-                client_num=args.client_num,
-                label_counts=counts,
-                save_path=f"{dataset_root}/class_distribution.png",
-            )
-            # domain distribution
-            counts = np.zeros(
-                (len(metadata["domain_map"]), args.client_num), dtype=np.int64
-            )
-            client_ids = range(args.client_num)
-            for i, client_id in enumerate(client_ids):
-                for j, cnt in stats[client_id]["domain space"].items():
-                    counts[j][i] = cnt
-            plot_distribution(
-                client_num=args.client_num,
-                label_counts=counts,
-                save_path=f"{dataset_root}/domain_distribution.png",
-            )
-
-        else:
-            counts = np.zeros((len(dataset.classes), args.client_num), dtype=np.int64)
-            client_ids = range(args.client_num)
-            for i, client_id in enumerate(client_ids):
-                for j, cnt in stats[client_id]["y"].items():
-                    counts[j][i] = cnt
-            plot_distribution(
-                client_num=args.client_num,
-                label_counts=counts,
-                save_path=f"{dataset_root}/class_distribution.png",
-            )
+        counts = np.zeros((len(dataset.classes), args.client_num), dtype=np.int64)
+        client_ids = range(args.client_num)
+        for i, client_id in enumerate(client_ids):
+            for j, cnt in stats[client_id]["y"].items():
+                counts[j][i] = cnt
+        plot_distribution(
+            client_num=args.client_num,
+            label_counts=counts,
+            save_path=f"{dataset_root}/class_distribution.png",
+        )
 
     with open(dataset_root / "partition.pkl", "wb") as f:
         pickle.dump(partition, f)
@@ -372,24 +290,8 @@ if __name__ == "__main__":
     parser.add_argument("-fpc", "--flower_partitioner_class", type=str, default="")
     parser.add_argument("-fpk", "--flower_partitioner_kwargs", type=str, default="{}")
 
-    # For synthetic data only
-    parser.add_argument("--gamma", type=float, default=0.5)
-    parser.add_argument("--beta", type=float, default=0.5)
-    parser.add_argument("--dimension", type=int, default=60)
-
     # For CIFAR-100 only
     parser.add_argument("--super_class", type=int, default=0)
-
-    # For EMNIST only
-    parser.add_argument(
-        "--emnist_split",
-        type=str,
-        choices=["byclass", "bymerge", "letters", "balanced", "digits", "mnist"],
-        default="byclass",
-    )
-
-    # For domain generalization datasets only
-    parser.add_argument("--ood_domains", nargs="+", default=None)
 
     # For semantic partition only
     parser.add_argument("-sm", "--semantic", type=int, default=0)

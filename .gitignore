@@ -47,3 +47,15 @@ partition_md5.txt
 *.json
 *.png
 *.pt
+
+# Ignore medical datasets and compressed files
+data/polypgen/
+*.tar.gz
+*.zip
+
+# Ignore python environments
+thesis_env/
+__pycache__/
+
+# Ignore matrix result outputs (until you are ready to share them)
+results_matrix.csv

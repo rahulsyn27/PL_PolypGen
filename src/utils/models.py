@@ -131,21 +131,11 @@ class DecoupledModel(nn.Module):
 # CNN used in FedAvg
 class FedAvgCNN(DecoupledModel):
     feature_length = {
-        "mnist": 1024,
-        "medmnistS": 1024,
-        "medmnistC": 1024,
-        "medmnistA": 1024,
-        "covid19": 196736,
-        "fmnist": 1024,
-        "emnist": 1024,
-        "femnist": 1,
         "cifar10": 1600,
-        "cinic10": 1600,
         "cifar100": 1600,
-        "tiny_imagenet": 3200,
-        "celeba": 133824,
         "svhn": 1600,
         "usps": 800,
+        "polypgen": 25088,
     }
 
     def __init__(self, dataset: str, pretrained):
@@ -168,21 +158,11 @@ class FedAvgCNN(DecoupledModel):
 
 class LeNet5(DecoupledModel):
     feature_length = {
-        "mnist": 256,
-        "medmnistS": 256,
-        "medmnistC": 256,
-        "medmnistA": 256,
-        "covid19": 49184,
-        "fmnist": 256,
-        "emnist": 256,
-        "femnist": 256,
         "cifar10": 400,
-        "cinic10": 400,
-        "svhn": 400,
         "cifar100": 400,
-        "celeba": 33456,
+        "svhn": 400,
         "usps": 200,
-        "tiny_imagenet": 2704,
+        "polypgen": 14400,
     }
 
     def __init__(self, dataset: str, pretrained):
@@ -210,19 +190,11 @@ class LeNet5(DecoupledModel):
 
 class TwoNN(DecoupledModel):
     feature_length = {
-        "mnist": 784,
-        "medmnistS": 784,
-        "medmnistC": 784,
-        "medmnistA": 784,
-        "fmnist": 784,
-        "emnist": 784,
-        "femnist": 784,
         "cifar10": 3072,
-        "cinic10": 3072,
-        "svhn": 3072,
         "cifar100": 3072,
+        "svhn": 3072,
         "usps": 1536,
-        "synthetic": DATA_SHAPE["synthetic"],
+        "polypgen": 150528,
     }
 
     def __init__(self, dataset: str, pretrained):
