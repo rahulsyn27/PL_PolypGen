@@ -2,7 +2,6 @@ from typing import Dict, List, Any, Optional
 from copy import deepcopy
 import torch
 import torch.nn as nn
-from omegaconf import DictConfig
 
 
 def fednova_aggregate(
