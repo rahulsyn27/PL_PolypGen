@@ -51,10 +51,16 @@ class FedAvgServer:
         self,
         client_packages: List[Dict[str, Any]],
         use_fednova: bool = False,
+        p1_fedrep: bool = False,
+        p2_fedbn: bool = False,
     ) -> None:
         """
         Aggregate client weights. If use_fednova=True, normalizes each client's
         weight update by steps_completed before summing.
+
+        p1_fedrep / p2_fedbn are accepted for interface parity with FedNovaServer
+        but have no effect here — the keys were already filtered out by
+        package_client_weights before packages arrive at the server.
         """
         if not client_packages:
             return

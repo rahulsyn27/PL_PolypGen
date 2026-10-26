@@ -7,10 +7,10 @@ method: fedavg
 
 dataset:
   # [cifar10, cifar100, svhn, usps, polypgen]
-  name: cifar10
+  name: polypgen
 
 model:
-  name: lenet5
+  name: resnet18
 
   # Whether to use torchvision integrated model weights.
   # Has no effect if model is lenet5, 2nn or fedavgcnn
@@ -74,8 +74,8 @@ parallel:
 
 common:
   seed: 42 # Random seed of the run.
-  join_ratio: 0.1 # Ratio for (client each round) / (client num in total).
-  global_epoch: 100 # Number of global epochs, also called communication round.
+  join_ratio: 1.0 # Ratio for (client each round) / (client num in total). 1.0 = all 6 centers.
+  global_epoch: 50 # Number of global epochs, also called communication round.
   local_epoch: 5 # Number if epochs of client local training.
   batch_size: 32 # Data batch size for client local training.
   reset_optimizer_on_global_epoch: true # Whether to reset optimizer on each global epoch.
@@ -112,10 +112,10 @@ common:
     # Frequency is set by `server.interval`. Negative value for disabling.
     # NOTE: If clients have personalized model parameters like local buffers or classifiers, centralized evaluation for the global model is disabled.
     server:
-      interval: -1
+      interval: 1
       train: false
       val: false
-      test: false
+      test: true
       # Whether to evaluate the global model in train mode or eval mode.
       # Evaluating in train mode allows to get better batchnorm statistics, but is dependent on the order of the data.
       model_in_train_mode: false

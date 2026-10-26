@@ -276,6 +276,21 @@ export function simulateFLRound(
   const macroPrecision = Math.min(99.0, globalTestAcc * 0.96 + (Math.random() - 0.5) * 0.5);
   const macroF1 = (2 * macroPrecision * macroRecall) / (macroPrecision + macroRecall);
 
+  // For binary classification micro == macro (single positive class).
+  // Derive a plausible micro value from the per-client weighted average
+  // rather than using an arbitrary constant offset.
+  const totalActive = activeClients.reduce((sum, cid) => {
+    const c = partition.clientDistributions.find(d => d.clientId === cid);
+    return sum + (c ? c.totalCount : 0);
+  }, 0);
+  const weightedAcc = activeClients.reduce((sum, cid) => {
+    const c = partition.clientDistributions.find(d => d.clientId === cid);
+    const weight = c ? c.totalCount / Math.max(1, totalActive) : 0;
+    return sum + weight * (clientAccuracies[cid] ?? globalTestAcc);
+  }, 0);
+  const microPrecision = Math.min(99.0, weightedAcc * 0.97 + (Math.random() - 0.5) * 0.3);
+  const microRecall    = Math.min(99.0, weightedAcc * 0.99 + (Math.random() - 0.5) * 0.3);
+
   // Cumulative communication
   const prevComm = previousMetrics ? previousMetrics.cumulativeCommunicationKb : 0;
   const currentComm = prevComm + profile.commKb * activeClients.length;
@@ -302,8 +317,8 @@ export function simulateFLRound(
     macroPrecision: Number(macroPrecision.toFixed(1)),
     macroRecall: Number(macroRecall.toFixed(1)),
     macroF1: Number(macroF1.toFixed(1)),
-    microPrecision: Number((macroPrecision + 0.3).toFixed(1)),
-    microRecall: Number((macroRecall + 0.2).toFixed(1)),
+    microPrecision: Number(microPrecision.toFixed(1)),
+    microRecall: Number(microRecall.toFixed(1)),
     cumulativeCommunicationKb: currentComm,
     privacyEpsilonSpent: epsilonSpent,
   };

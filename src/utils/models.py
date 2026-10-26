@@ -45,32 +45,30 @@ def get_resnet34(num_classes: int = 2, in_channels: int = 3, pretrained: bool = 
     return DecoupledModel(base=body, head=head)
 
 
-class SimpleCNN(nn.Module):
-    def __init__(self, in_channels: int = 3, num_classes: int = 2):
-        super().__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(in_channels, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2, 2),
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2, 2),
-            nn.AdaptiveAvgPool2d((1, 1))
-        )
-        self.classifier = nn.Linear(64, num_classes)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.features(x)
-        x = torch.flatten(x, 1)
-        return self.classifier(x)
+def get_simplecnn(num_classes: int = 2, in_channels: int = 3, pretrained: bool = False) -> nn.Module:
+    """
+    Wrap SimpleCNN in DecoupledModel so P1 (FedRep) and P2 (FedBN) layer
+    routing works identically to the ResNet variants.
+    """
+    features = nn.Sequential(
+        nn.Conv2d(in_channels, 32, kernel_size=3, padding=1),
+        nn.BatchNorm2d(32),
+        nn.ReLU(inplace=True),
+        nn.MaxPool2d(2, 2),
+        nn.Conv2d(32, 64, kernel_size=3, padding=1),
+        nn.BatchNorm2d(64),
+        nn.ReLU(inplace=True),
+        nn.MaxPool2d(2, 2),
+        nn.AdaptiveAvgPool2d((1, 1))
+    )
+    head = nn.Linear(64, num_classes)
+    return DecoupledModel(base=features, head=head)
 
 
 MODELS = {
     "resnet18": get_resnet18,
     "resnet34": get_resnet34,
-    "simplecnn": SimpleCNN,
+    "simplecnn": get_simplecnn,
 }
 
 

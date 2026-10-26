@@ -75,20 +75,24 @@ class PolypGenDataset(Dataset):
                 self.targets = torch.from_numpy(np.load(per_center_targets)).long()
                 self._is_combined = True
             elif not self.image_paths:
-                # Create a placeholder synthetic tensor if files are not yet downloaded on dev machine
-                # (so unit checks pass before deployment to 4GB server)
-                dummy_samples = 100
-                self.data = torch.zeros((dummy_samples, 3, 224, 224), dtype=torch.float32)
-                self.targets = torch.randint(0, 2, (dummy_samples,), dtype=torch.long)
-                self._is_combined = True
+                # No real data found for this center — raise so experiments are never silently
+                # corrupted by dummy tensors on a production server.
+                raise FileNotFoundError(
+                    f"No image data found for center C{center_id}.\n"
+                    f"  Checked image dir  : {images_dir}\n"
+                    f"  Checked npy files  : {per_center_data}, {per_center_targets}\n"
+                    f"Please download the PolypGen dataset and place it under: {self.root_dir}"
+                )
             else:
                 self._is_combined = False
         else:
-            # Fallback: create mock or empty
-            dummy_samples = 600
-            self.data = torch.zeros((dummy_samples, 3, 224, 224), dtype=torch.float32)
-            self.targets = torch.randint(0, 2, (dummy_samples,), dtype=torch.long)
-            self._is_combined = True
+            # center_id=None and no combined npy files found
+            raise FileNotFoundError(
+                f"Combined dataset files not found.\n"
+                f"  Expected: {data_file}\n"
+                f"            {targets_file}\n"
+                f"Please download the PolypGen dataset and place it under: {self.root_dir}"
+            )
 
     def __len__(self) -> int:
         if self._is_combined:

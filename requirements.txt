@@ -1,6 +1,17 @@
-torch>=2.0.0
-torchvision>=0.15.0
-numpy>=1.23.0
-scipy>=1.10.0
-scikit-learn>=1.2.0
-Pillow>=9.5.0
+# Python dependencies for PL_PolypGen (Linux server compatible)
+# Install with: pip install -r requirements.txt
+
+# Core deep-learning stack
+torch>=2.1.0,<3.0.0
+torchvision>=0.16.0,<1.0.0
+
+# Scientific computing
+numpy>=1.24.0,<2.0.0
+scipy>=1.11.0,<2.0.0         # jensenshannon requires >= 1.7.0; 1.11+ is stable on Linux
+scikit-learn>=1.3.0,<2.0.0
+
+# Image loading
+Pillow>=10.0.0,<12.0.0
+
+# YAML config (for config/defaults.yaml consumption)
+PyYAML>=6.0,<7.0

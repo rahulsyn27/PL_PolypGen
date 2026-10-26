@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import argparse
 import sys
 import os
@@ -41,7 +42,8 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=0.01, help="Learning rate")
     parser.add_argument("--momentum", type=float, default=0.9, help="SGD momentum")
     parser.add_argument("--data_dir", type=str, default="data/polypgen", help="Path to polypgen data")
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Compute device")
+    # Default to CUDA when available; resolved safely at runtime below (not at import time)
+    parser.add_argument("--device", type=str, default=None, help="Compute device (cuda / cpu). Defaults to cuda if available.")
 
     # Heterogeneity switches (The Problems)
     parser.add_argument("--h1_label_skew", action="store_true", default=False, help="H1: Dirichlet label skew")
@@ -110,12 +112,18 @@ def prepare_datasets(args):
             client_label_arrays.append(np.array(labels))
 
         if args.h1_label_skew:
-            # Further skew the labels across clients using Dirichlet
-            all_train_samples = []
-            for ds in client_train_datasets:
-                for idx in range(len(ds)):
-                    all_train_samples.append(ds[idx])
-            
+            # Further skew the labels across clients using Dirichlet.
+            # We pool ALL samples (train + test) so both splits are re-partitioned
+            # from the same Dirichlet draw, keeping train/test distributions consistent.
+            all_samples = []
+            for cid in range(num_clients):
+                center_ds = client_train_datasets[cid].dataset
+                for idx in client_train_datasets[cid].indices:
+                    all_samples.append(center_ds[idx])
+                center_ds_test = client_test_datasets[cid].dataset
+                for idx in client_test_datasets[cid].indices:
+                    all_samples.append(center_ds_test[idx])
+
             # Simple wrapper to run dirichlet_partition
             class CombinedDataset:
                 def __init__(self, samples):
@@ -124,10 +132,20 @@ def prepare_datasets(args):
                 def __len__(self): return len(self.samples)
                 def __getitem__(self, idx): return self.samples[idx]
 
-            comb = CombinedDataset(all_train_samples)
+            comb = CombinedDataset(all_samples)
             part = dirichlet_partition(comb, num_clients=num_clients, beta=0.1, min_samples_per_client=5, seed=args.seed)
-            client_train_datasets = [Subset(comb, part[i]) for i in range(num_clients)]
-            client_label_arrays = [comb.targets[part[i]].numpy() for i in range(num_clients)]
+            new_train = []
+            new_test = []
+            new_labels = []
+            for i in range(num_clients):
+                c_idx = part[i]
+                split = max(1, int(0.8 * len(c_idx)))
+                new_train.append(Subset(comb, c_idx[:split]))
+                new_test.append(Subset(comb, c_idx[split:]))
+                new_labels.append(comb.targets[c_idx[:split]].numpy())
+            client_train_datasets = new_train
+            client_test_datasets = new_test
+            client_label_arrays = new_labels
 
     else:
         # Pooled IID across all centers (H2=False)
@@ -178,7 +196,19 @@ def evaluate_client(model: nn.Module, test_loader: DataLoader, device: torch.dev
 
 def main():
     args = parse_args()
+
+    # Resolve device at runtime so the default is evaluated after CUDA_VISIBLE_DEVICES is set
+    # by run_matrix.py (or the scheduler), not at argument-parse time.
+    if args.device is None:
+        args.device = "cuda" if torch.cuda.is_available() else "cpu"
+
     device = torch.device(args.device)
+
+    # Guard: if user asked for CUDA but it's not available, fall back gracefully
+    if device.type == "cuda" and not torch.cuda.is_available():
+        print("[WARN] CUDA requested but not available on this machine. Falling back to CPU.")
+        device = torch.device("cpu")
+
     set_seed(args.seed, use_cuda=(device.type == "cuda"))
 
     print(f"=== Starting FL Run: Seed={args.seed} | H1={args.h1_label_skew} H2={args.h2_feature_shift} H3={args.h3_system_heterogeneity} | P1={args.p1_fedrep} P2={args.p2_fedbn} P3={args.p3_fednova} ===")

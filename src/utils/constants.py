@@ -59,7 +59,7 @@ DEFAULTS = {
     },
     "common": {
         "seed": 42,
-        "join_ratio": 1.0,
+        "join_ratio": 1.0,    # all 6 centers participate every round
         "global_epoch": 50,
         "local_epoch": 5,
         "batch_size": 32,
