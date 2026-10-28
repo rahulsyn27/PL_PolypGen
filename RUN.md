@@ -191,3 +191,15 @@ CLIENT_6_ACCURACY:   86.73        ← C6 OOD held-out generalization
 
 Full matrix results → `results_matrix.csv`  
 SLURM logs → `logs/matrix_<JOBID>.out` / `.err`
+
+
+cd /home/rahulr/PL_PolypGen/
+source PLenv/bin/activate
+rm results_matrix.csv
+srun --partition=h100 --gres=gpu:1 --time=24:00:00 --pty bash -i
+python3 run_matrix.py --gpu_id=0 --global_epoch=20 --local_epoch=5 --batch_size=32
+
+
+tmux ls
+tmux attach -t 0
+tmux kill-session -t 0
