@@ -203,3 +203,5 @@ python3 run_matrix.py --gpu_id=0 --global_epoch=20 --local_epoch=5 --batch_size=
 tmux ls
 tmux attach -t 0
 tmux kill-session -t 0
+
+rsync -avz rahulr@10.100.36.74:/home/rahulr/PL_PolypGen ~/Desktop/
