@@ -49,7 +49,7 @@ partition_md5.txt
 *.pt
 
 # Ignore medical datasets and compressed files
-data/polypgen/
+data/PolypGen/
 *.tar.gz
 *.zip
 
