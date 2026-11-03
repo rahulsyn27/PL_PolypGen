@@ -18,14 +18,16 @@ echo "=== CUDA Device: $CUDA_VISIBLE_DEVICES ==="
 # Activate your python virtualenv or conda environment
 # source /path/to/conda/bin/activate pfl_env
 
-# Run the 192-run master orchestrator on the assigned SLURM GPU
+# Run the 96-run master orchestrator on the assigned SLURM GPU
+# (it checks the data first; results go to results_polypgen.csv, per-run logs to logs/polypgen/)
 python3 run_matrix.py \
     --gpu_id="${CUDA_VISIBLE_DEVICES:-0}" \
-    --output_csv="results_matrix.csv" \
+    --dataset=polypgen \
+    --data_dir=data/PolypGen \
     --global_epoch=20 \
     --local_epoch=5 \
     --batch_size=32 \
     --lr=0.01 \
     --resume
 
-echo "=== Matrix run completed. Results written to results_matrix.csv ==="
+echo "=== Matrix run completed. Results written to results_polypgen.csv ==="

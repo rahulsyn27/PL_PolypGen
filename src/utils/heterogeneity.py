@@ -15,7 +15,7 @@ def dirichlet_partition(
     Partition dataset indices across clients using Dirichlet distribution for label skew (H1).
     
     Args:
-        dataset: PyTorch dataset with .targets attribute
+        dataset: PyTorch dataset with .targets attribute, or the label array itself
         num_clients: Number of clients (default 6)
         beta: Dirichlet concentration parameter (lower = more heterogeneous, alpha=0.1 vs alpha=100)
         min_samples_per_client: Minimum samples per client
@@ -26,7 +26,7 @@ def dirichlet_partition(
     """
     np.random.seed(seed)
     
-    targets = dataset.targets
+    targets = getattr(dataset, "targets", dataset)
     if hasattr(targets, 'numpy'):
         targets = targets.numpy()
     targets = np.array(targets, dtype=np.int64)

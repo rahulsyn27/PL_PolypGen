@@ -59,3 +59,6 @@ __pycache__/
 
 # Ignore matrix result outputs (until you are ready to share them)
 results_matrix.csv
+# matrix results, per-run logs and local datasets
+logs/
+data/PolypGen
