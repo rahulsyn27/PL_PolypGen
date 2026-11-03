@@ -49,6 +49,12 @@ class PolypGenDataset(Dataset):
             images_dir = os.path.join(center_path, "images")
             masks_dir = os.path.join(center_path, "masks")
 
+            # Official PolypGen release layout: data_C{id}/images_C{id}, data_C{id}/masks_C{id}
+            official_path = os.path.join(self.root_dir, f"data_{center_folder}")
+            if not os.path.exists(images_dir) and os.path.exists(official_path):
+                images_dir = os.path.join(official_path, f"images_{center_folder}")
+                masks_dir = os.path.join(official_path, f"masks_{center_folder}")
+
             # Fallback if images/masks are directly inside center_folder
             if not os.path.exists(images_dir):
                 images_dir = center_path
@@ -59,7 +65,14 @@ class PolypGenDataset(Dataset):
                 for fname in sorted(os.listdir(images_dir)):
                     if fname.lower().endswith((".png", ".jpg", ".jpeg", ".tif", ".tiff")):
                         img_path = os.path.join(images_dir, fname)
-                        mask_path = os.path.join(masks_dir, fname) if os.path.exists(masks_dir) else ""
+                        mask_path = ""
+                        if os.path.exists(masks_dir):
+                            # Masks are named either identically or as <stem>_mask.<ext>
+                            stem, ext = os.path.splitext(fname)
+                            for cand in (fname, f"{stem}_mask{ext}", f"{stem}_mask.jpg", f"{stem}_mask.png"):
+                                if os.path.exists(os.path.join(masks_dir, cand)):
+                                    mask_path = os.path.join(masks_dir, cand)
+                                    break
                         self.image_paths.append((img_path, mask_path))
 
             # If directory didn't have raw images, check if per-center npy exists (data_c{id}.npy)
@@ -86,13 +99,12 @@ class PolypGenDataset(Dataset):
             else:
                 self._is_combined = False
         else:
-            # center_id=None and no combined npy files found
-            raise FileNotFoundError(
-                f"Combined dataset files not found.\n"
-                f"  Expected: {data_file}\n"
-                f"            {targets_file}\n"
-                f"Please download the PolypGen dataset and place it under: {self.root_dir}"
-            )
+            # center_id=None and no combined npy files: pool raw images from all centers C1-C6
+            self.image_paths = []
+            for cid in range(1, 7):
+                self.image_paths.extend(PolypGenDataset(self.root_dir, center_id=cid).image_paths)
+            self._is_combined = False
+            self.targets = torch.tensor([self._load(i)[1] for i in range(len(self.image_paths))], dtype=torch.long)
 
     def __len__(self) -> int:
         if self._is_combined:
@@ -107,21 +119,31 @@ class PolypGenDataset(Dataset):
                 image = self.transform(image)
             return image, label
 
-        img_path, mask_path = self.image_paths[idx]
-        image = Image.open(img_path).convert("RGB")
-        image = image.resize((224, 224))
-        image_np = np.array(image, dtype=np.float32) / 255.0
-        # HWC -> CHW
-        image_tensor = torch.from_numpy(image_np.transpose((2, 0, 1)))
-
-        label = 0
-        if mask_path and os.path.exists(mask_path):
-            mask = Image.open(mask_path).convert("L")
-            mask_np = np.array(mask)
-            if mask_np.max() > 0:
-                label = 1
+        image_u8, label = self._load(idx)
+        # HWC uint8 -> CHW float in [0, 1]
+        image_tensor = torch.from_numpy(image_u8.transpose((2, 0, 1))).float().div_(255.0)
 
         label_tensor = torch.tensor(label, dtype=torch.long)
         if self.transform:
             image_tensor = self.transform(image_tensor)
         return image_tensor, label_tensor
+
+    def _load(self, idx: int) -> Tuple[np.ndarray, int]:
+        """Decode + resize an image and derive its label from the mask, cached in memory as uint8.
+        JPEG decoding of full-resolution frames otherwise dominates epoch time and starves the GPU."""
+        cache = self.__dict__.setdefault("_cache", {})
+        if idx in cache:
+            return cache[idx]
+
+        img_path, mask_path = self.image_paths[idx]
+        image = Image.open(img_path).convert("RGB")
+        image_np = np.array(image.resize((224, 224)), dtype=np.uint8)
+
+        label = 0
+        if mask_path and os.path.exists(mask_path):
+            mask = Image.open(mask_path).convert("L")
+            if np.array(mask).max() > 0:
+                label = 1
+
+        cache[idx] = (image_np, label)
+        return cache[idx]

@@ -3,6 +3,7 @@ import argparse
 import sys
 import os
 import random
+import time
 from pathlib import Path
 from typing import Dict, List, Any
 import numpy as np
@@ -18,7 +19,12 @@ if str(CURRENT_DIR) not in sys.path:
 from src.utils.constants import NUM_CLASSES, INPUT_CHANNELS, DATA_SHAPE
 from src.utils.polypgen import PolypGenDataset
 from src.utils.models import create_model
-from src.utils.heterogeneity import dirichlet_partition, HeterogeneousClientTrainer
+from src.utils.heterogeneity import (
+    center_label_skew_partition,
+    dirichlet_partition,
+    stratified_train_test_split,
+    HeterogeneousClientTrainer,
+)
 from src.utils.weight_packaging import package_client_weights, unpack_server_weights
 from src.utils.statistical_distances import jensen_shannon_divergence, calculate_bn_distance
 from src.server.fedavg import FedAvgServer
@@ -41,7 +47,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
     parser.add_argument("--lr", type=float, default=0.01, help="Learning rate")
     parser.add_argument("--momentum", type=float, default=0.9, help="SGD momentum")
-    parser.add_argument("--data_dir", type=str, default="data/polypgen", help="Path to polypgen data")
+    parser.add_argument("--data_dir", type=str, default="data/PolypGen", help="Path to polypgen data")
     # Default to CUDA when available; resolved safely at runtime below (not at import time)
     parser.add_argument("--device", type=str, default=None, help="Compute device (cuda / cpu). Defaults to cuda if available.")
 
@@ -81,7 +87,8 @@ def prepare_datasets(args):
     Prepare datasets for 6 clients according to H1 (Label Skew) and H2 (Feature Shift).
     If H2=True: map clients strictly to Centers C1-C6.
     If H2=False: pool all center data and distribute IID.
-    If H1=True: apply Dirichlet partitioning (alpha=0.1) for severe label skew.
+    If H1=True and H2=True: subsample each center to a Dirichlet (alpha=0.1) label mix, keeping centers separate.
+    If H1=True and H2=False: apply Dirichlet partitioning (alpha=0.1) to the pooled data.
     """
     num_clients = 6
     client_train_datasets = []
@@ -112,37 +119,19 @@ def prepare_datasets(args):
             client_label_arrays.append(np.array(labels))
 
         if args.h1_label_skew:
-            # Further skew the labels across clients using Dirichlet.
-            # We pool ALL samples (train + test) so both splits are re-partitioned
-            # from the same Dirichlet draw, keeping train/test distributions consistent.
-            all_samples = []
-            for cid in range(num_clients):
-                center_ds = client_train_datasets[cid].dataset
-                for idx in client_train_datasets[cid].indices:
-                    all_samples.append(center_ds[idx])
-                center_ds_test = client_test_datasets[cid].dataset
-                for idx in client_test_datasets[cid].indices:
-                    all_samples.append(center_ds_test[idx])
-
-            # Simple wrapper to run dirichlet_partition
-            class CombinedDataset:
-                def __init__(self, samples):
-                    self.samples = samples
-                    self.targets = torch.tensor([s[1] for s in samples])
-                def __len__(self): return len(self.samples)
-                def __getitem__(self, idx): return self.samples[idx]
-
-            comb = CombinedDataset(all_samples)
-            part = dirichlet_partition(comb, num_clients=num_clients, beta=0.1, min_samples_per_client=5, seed=args.seed)
+            # Further skew the labels within each center, so clients stay on their own center
+            # and H1 does not erase the feature shift from H2.
+            centers = [client_train_datasets[cid].dataset for cid in range(num_clients)]
+            center_labels = [np.array([int(ds[i][1]) for i in range(len(ds))]) for ds in centers]
+            part = center_label_skew_partition(center_labels, beta=0.1, min_samples_per_client=10, seed=args.seed)
             new_train = []
             new_test = []
             new_labels = []
             for i in range(num_clients):
-                c_idx = part[i]
-                split = max(1, int(0.8 * len(c_idx)))
-                new_train.append(Subset(comb, c_idx[:split]))
-                new_test.append(Subset(comb, c_idx[split:]))
-                new_labels.append(comb.targets[c_idx[:split]].numpy())
+                train_idx, test_idx = stratified_train_test_split(part[i], center_labels[i], seed=args.seed)
+                new_train.append(Subset(centers[i], train_idx))
+                new_test.append(Subset(centers[i], test_idx))
+                new_labels.append(center_labels[i][train_idx])
             client_train_datasets = new_train
             client_test_datasets = new_test
             client_label_arrays = new_labels
@@ -157,13 +146,13 @@ def prepare_datasets(args):
         if args.h1_label_skew:
             # Dirichlet label skew on pooled data
             part = dirichlet_partition(combined_ds, num_clients=num_clients, beta=0.1, min_samples_per_client=5, seed=args.seed)
+            pooled_labels = combined_ds.targets.numpy()
             for cid in range(num_clients):
-                c_idx = part[cid]
-                split = int(0.8 * len(c_idx))
-                client_train_datasets.append(Subset(combined_ds, c_idx[:split]))
-                client_test_datasets.append(Subset(combined_ds, c_idx[split:]))
-                labels = [combined_ds[i][1].item() if isinstance(combined_ds[i][1], torch.Tensor) else combined_ds[i][1] for i in c_idx[:split]]
-                client_label_arrays.append(np.array(labels))
+                # Partition indices are ordered by label, so the split must be per label
+                train_idx, test_idx = stratified_train_test_split(part[cid], pooled_labels, seed=args.seed)
+                client_train_datasets.append(Subset(combined_ds, train_idx))
+                client_test_datasets.append(Subset(combined_ds, test_idx))
+                client_label_arrays.append(pooled_labels[train_idx])
         else:
             # Standard uniform IID partition
             chunk = n_total // num_clients
@@ -177,6 +166,7 @@ def prepare_datasets(args):
 
     # Calculate actual JS Divergence between client label distributions
     js_divergence = jensen_shannon_divergence(client_label_arrays, num_classes=2)
+    print(f"Client train sizes: {[len(ds) for ds in client_train_datasets]} | test sizes: {[len(ds) for ds in client_test_datasets]}")
     return client_train_datasets, client_test_datasets, js_divergence
 
 
@@ -244,8 +234,10 @@ def main():
     # 3. Federated Training Loop
     for round_idx in range(1, args.global_epoch + 1):
         client_packages = []
+        round_start = time.time()
 
         for cid in range(num_clients):
+            client_start = time.time()
             model = client_models[cid]
             optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
 
@@ -269,6 +261,9 @@ def main():
                 p2_fedbn=args.p2_fedbn
             )
             client_packages.append(pkg)
+            print(f"  [Round {round_idx}] Client {cid+1}: epochs={train_res['effective_epochs']} "
+                  f"steps={train_res['steps_completed']} loss={train_res['avg_loss']:.4f} "
+                  f"time={time.time() - client_start:.1f}s", flush=True)
 
         # Server Aggregation (FedAvg or FedNova P3)
         if args.p3_fednova:
@@ -284,6 +279,8 @@ def main():
                 p1_fedrep=args.p1_fedrep,
                 p2_fedbn=args.p2_fedbn
             )
+
+        print(f"=== Round {round_idx}/{args.global_epoch} done in {time.time() - round_start:.1f}s ===", flush=True)
 
     # 4. Final Evaluation & Distance Measurements
     client_accuracies = [evaluate_client(client_models[i], test_loaders[i], device) for i in range(num_clients)]

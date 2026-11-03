@@ -239,7 +239,8 @@ def main():
         ]
 
         if h1: cmd.append("--h1_label_skew")
-        if h2: cmd.append("--h2_feature_shift")
+        # H2 defaults to on in main.py, so it must be set explicitly for H2=False runs
+        cmd.append(f"--H2={h2}")
         if h3: cmd.append("--h3_system_heterogeneity")
         if p1: cmd.append("--p1_fedrep")
         if p2: cmd.append("--p2_fedbn")

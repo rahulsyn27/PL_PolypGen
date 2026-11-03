@@ -4,6 +4,9 @@ import torch
 import torch.nn as nn
 
 
+BN_BUFFER_SUFFIXES = ("running_mean", "running_var", "num_batches_tracked")
+
+
 def fednova_aggregate(
     client_params_list: List[Dict[str, torch.Tensor]],
     steps_completed_list: List[int],
@@ -55,11 +58,23 @@ def fednova_aggregate(
     if global_model_params is not None:
         for key in param_keys:
             w_global = global_model_params[key].float()
+
+            # BN statistics are measurements, not gradient updates: step normalization would
+            # extrapolate them (even to negative variance), so use a plain weighted average
+            if key.endswith(BN_BUFFER_SUFFIXES):
+                accum = torch.zeros_like(w_global)
+                for i in range(num_clients):
+                    if key in client_params_list[i]:
+                        accum += p_k[i] * client_params_list[i][key].to(w_global.device).float()
+                aggregated_params[key] = accum.to(dtype=global_model_params[key].dtype)
+                continue
+
             delta_accum = torch.zeros_like(w_global)
 
             for i in range(num_clients):
                 if key in client_params_list[i]:
-                    w_client = client_params_list[i][key].float()
+                    # Client packages are shipped on CPU; align with the (possibly CUDA) global model
+                    w_client = client_params_list[i][key].to(w_global.device).float()
                     # Displacement d_k = (W_t - W_k) / tau_k
                     displacement = (w_global - w_client) / float(taus[i])
                     delta_accum += p_k[i] * displacement
