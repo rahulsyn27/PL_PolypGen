@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Dict, List, Set, Optional
+from typing import Dict, List, Set, Optional, Tuple
 from collections import Counter
 import torch
 
@@ -64,6 +64,88 @@ def dirichlet_partition(
                 partition[client_id] = list(range(len(targets)))[:min_samples_per_client]
                 
     return partition
+
+
+def center_label_skew_partition(
+    center_labels: List[np.ndarray],
+    beta: float = 0.1,
+    min_samples_per_client: int = 10,
+    max_retries: int = 20,
+    seed: int = 42
+) -> Dict[int, List[int]]:
+    """
+    Apply label skew (H1) while keeping every client on its own center, so feature shift (H2) survives.
+    Each center draws a target label mix from Dirichlet(beta) and is subsampled to match it,
+    which means images are dropped rather than moved between centers.
+
+    Args:
+        center_labels: Label array of each center, one entry per client
+        beta: Dirichlet concentration parameter (lower = more heterogeneous)
+        min_samples_per_client: Redraw a center's label mix if it would keep fewer samples
+        max_retries: Maximum draws per center; the draw keeping the most samples is used if none qualify
+        seed: Random seed for reproducibility
+
+    Returns:
+        Dict mapping client_id -> list of indices into that client's own center
+    """
+    rng = np.random.RandomState(seed)
+    partition = {}
+
+    for client_id, labels in enumerate(center_labels):
+        present, counts = np.unique(labels, return_counts=True)
+        best_keep = counts if len(present) == 1 else None
+
+        retry = 0
+        while best_keep is None or (best_keep.sum() < min_samples_per_client and retry < max_retries):
+            retry += 1
+            target = rng.dirichlet(np.repeat(beta, len(present)))
+            # Largest subset with this label mix, limited by the scarcest label
+            size = min(count / share for count, share in zip(counts, target) if share > 0)
+            keep = np.minimum(counts, np.round(size * target).astype(int))
+            if best_keep is None or keep.sum() > best_keep.sum():
+                best_keep = keep
+
+        partition[client_id] = []
+        for label, keep_count in zip(present, best_keep):
+            label_indices = np.where(labels == label)[0]
+            rng.shuffle(label_indices)
+            partition[client_id].extend(label_indices[:keep_count].tolist())
+
+    return partition
+
+
+def stratified_train_test_split(
+    indices: List[int],
+    labels: np.ndarray,
+    train_ratio: float = 0.8,
+    seed: int = 42
+) -> Tuple[List[int], List[int]]:
+    """
+    Split a client's indices per label, so train and test keep the same label mix.
+    A label with a single sample goes to train.
+
+    Args:
+        indices: Sample indices held by the client
+        labels: Labels addressable by those indices
+        train_ratio: Fraction of each label used for training
+        seed: Random seed for reproducibility
+
+    Returns:
+        Tuple of (train indices, test indices)
+    """
+    rng = np.random.RandomState(seed)
+    indices = np.array(indices, dtype=np.int64)
+    client_labels = labels[indices]
+    train, test = [], []
+
+    for label in np.unique(client_labels):
+        label_indices = indices[client_labels == label]
+        rng.shuffle(label_indices)
+        split = max(1, int(train_ratio * len(label_indices)))
+        train.extend(label_indices[:split].tolist())
+        test.extend(label_indices[split:].tolist())
+
+    return train, test
 
 
 def apply_system_heterogeneity(

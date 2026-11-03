@@ -1,6 +1,7 @@
 from copy import deepcopy
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
 import torch
+from torch.nn.modules.batchnorm import _BatchNorm
 
 
 def is_head_param(key: str) -> bool:
@@ -9,10 +10,16 @@ def is_head_param(key: str) -> bool:
     return any(indicator in key.lower() for indicator in head_indicators)
 
 
-def is_bn_param(key: str) -> bool:
-    """Check if parameter belongs to Batch Normalization layers (P2 - FedBN)."""
-    bn_indicators = ["bn", "running_mean", "running_var", "num_batches_tracked"]
-    return any(indicator in key.lower() for indicator in bn_indicators)
+def get_bn_keys(model: torch.nn.Module) -> Set[str]:
+    """
+    Get the state_dict keys of all Batch Normalization layers (P2 - FedBN).
+    Matches by layer type because names such as base.1 and downsample.1 do not contain "bn".
+    """
+    bn_keys = set()
+    for name, module in model.named_modules():
+        if isinstance(module, _BatchNorm):
+            bn_keys.update(f"{name}.{key}" if name else key for key in module.state_dict())
+    return bn_keys
 
 
 def package_client_weights(
@@ -39,13 +46,14 @@ def package_client_weights(
     """
     raw_state_dict = model.state_dict()
     filtered_state_dict = {}
+    bn_keys = get_bn_keys(model) if p2_fedbn else set()
 
     for key, val in raw_state_dict.items():
         # P1: Keep classification head private
         if p1_fedrep and is_head_param(key):
             continue
         # P2: Keep Batch Normalization private
-        if p2_fedbn and is_bn_param(key):
+        if key in bn_keys:
             continue
 
         filtered_state_dict[key] = val.detach().cpu().clone()
@@ -68,10 +76,11 @@ def unpack_server_weights(
     Update client model with aggregated server weights without overwriting private local layers.
     """
     current_state = model.state_dict()
+    bn_keys = get_bn_keys(model) if p2_fedbn else set()
     for key, val in server_params.items():
         if p1_fedrep and is_head_param(key):
             continue
-        if p2_fedbn and is_bn_param(key):
+        if key in bn_keys:
             continue
         if key in current_state:
             current_state[key].copy_(val)

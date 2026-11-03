@@ -167,7 +167,7 @@ npm run build     # production static build → dist/
 | `--data_dir` | `data/polypgen` | Path to dataset root |
 | `--device` | auto | `cuda` or `cpu` (auto-detected) |
 | `--h1_label_skew` | off | Enable Dirichlet Dir(0.1) label skew |
-| `--h2_feature_shift` | **on** | Map each client to its own hospital center |
+| `--h2_feature_shift` | **on** | Map each client to its own hospital center (use `--H2=false` to pool centers) |
 | `--h3_system_heterogeneity` | off | Enable 1×/2×/4× local epoch multipliers |
 | `--p1_fedrep` | off | FedRep: keep classification head private |
 | `--p2_fedbn` | off | FedBN: keep batch norm layers private |
